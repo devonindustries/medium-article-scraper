@@ -15,20 +15,20 @@ sh = ScraperHandler() # TODO: Initialise with DataHandler
 
 # App + CORS
 app = Flask(__name__)
+
 CORS(
     app,
-    # origins=["http://localhost:8080"],
-    origins=["https://mediumrare.fly.dev"], # TODO: Make use of env variables
+    resources={r"/api/*": {"origins": "https://mediumrare.fly.dev"}},
     supports_credentials=True,
-    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "OPTIONS"],
 )
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = 'https://mediumrare.fly.dev'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-    return response
+# @app.after_request
+# def add_cors_headers(response):
+#     response.headers['Access-Control-Allow-Origin'] = 'https://mediumrare.fly.dev'
+#     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+#     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+#     return response
 
 # ROUTES
 # ------
@@ -38,6 +38,7 @@ stream_queues = {}
 @app.route('/api/stream', methods=['POST'])
 @cross_origin()
 def start_scraping():
+
     genre = request.json.get('genre')
     type_ = request.json.get('type')
     tag = f"{genre}/{type_}"
@@ -72,9 +73,18 @@ def start_scraping():
     return {"message": "Scraper started"}, 200
 
 
-@app.route('/api/stream_feed', methods=['GET'])
+@app.route('/api/stream_feed', methods=['GET', 'OPTIONS'])
 @cross_origin()
 def stream_feed():
+
+    if request.method == "OPTIONS":
+        # Handle CORS preflight
+        response = jsonify({"status": "ok"})
+        response.headers.add("Access-Control-Allow-Origin", "https://mediumrare.fly.dev")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        return response, 200
+
     genre = request.args.get('genre')
     type_ = request.args.get('type')
     tag = f"{genre}/{type_}"
