@@ -1,21 +1,26 @@
-# Use Playwright base image
-FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
+# FROM mcr.microsoft.com/playwright/python:v1.51.0-noble-arm64
+FROM mcr.microsoft.com/playwright/python:v1.51.0-noble-amd64
 
-# Set working directory inside container
 WORKDIR /app
 
-# Copy application files from backend folder
-COPY . /app
+# Install Java 11
+# RUN apt-get update && \
+#     apt-get install -y openjdk-11-jdk && \
+#     ln -s /usr/lib/jvm/java-11-openjdk-* /usr/lib/jvm/java-11-openjdk-amd64
 
-# Install dependencies
-RUN pip install -r requirements.txt
+# # Set JAVA_HOME for all shells + Python
+# ENV JAVA_HOME="/usr/lib/jvm/java-11-openjdk-amd64"
+# ENV PATH="$JAVA_HOME/bin:$PATH"
 
-# Set environment variables for Flask
-ENV FLASK_APP=app.py
-ENV FLASK_RUN_HOST=0.0.0.0
+# Install Python deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose Flask port
-EXPOSE 5001
+COPY . .
 
-# Start Flask app
-CMD ["python", "app.py"]
+RUN playwright install
+
+EXPOSE 5050
+
+# CMD ["flask", "run", "--host=0.0.0.0"]
+CMD ["gunicorn", "-b", "0.0.0.0:5050", "app:app"]

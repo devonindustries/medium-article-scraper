@@ -1,39 +1,14 @@
-version: '3.8'
-
 services:
-  mysql:
-    image: mysql:8
-    container_name: mysql
-    restart: always
+  frontend:
+    build:
+      context: ./frontend
     ports:
-      - "${MYSQL_PORT}:3306"  # MySQL exposed on port from .env
-    networks:
-      - backend_network
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    volumes:
-      - mysql_data:/var/lib/mysql  # Persist MySQL data
-
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    container_name: phpmyadmin
+      - "8080:80"
     restart: always
-    depends_on:
-      - mysql
+
+  backend:
+    build:
+      context: ./backend
     ports:
-      - "${PHPMYADMIN_PORT}:80"  # phpMyAdmin available on port from .env
-    environment:
-      PMA_HOST: mysql
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    networks:
-      - backend_network
-
-networks:
-  backend_network:
-    driver: bridge
-
-volumes:
-  mysql_data:  # Named volume for MySQL persistence
+      - "5050:5050"
+    restart: always

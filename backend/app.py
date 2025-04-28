@@ -1,58 +1,103 @@
-from flask import Flask, request, jsonify
-from scripts.db import SessionLocal, wait_for_mysql
-from scripts.models import Article
-from scripts.scraper import scrape_medium
+import json
+import asyncio
+import threading
+import queue
 
-# Step 1: Create the Flask app
+from flask import Flask, request, Response, stream_with_context, jsonify
+from flask_cors import CORS, cross_origin
+
+from scripts.scraper_handler import ScraperHandler
+# from scripts.data_handler import DataHandler
+
+active_scrapers = set()
+# dh = DataHandler()
+sh = ScraperHandler() # TODO: Initialise with DataHandler
+
+# App + CORS
 app = Flask(__name__)
+CORS(
+    app,
+    # origins=["http://localhost:8080"],
+    origins=["https://mediumrare.fly.dev"], # TODO: Make use of env variables
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+)
 
-# Step 2: Wait for MySQL to be ready before starting
-wait_for_mysql()
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = 'https://mediumrare.fly.dev'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
 
-@app.route('/scrape', methods=['POST'])
-def scrape():
-    """Scrape Medium and save articles to MySQL."""
-    session = SessionLocal()
-    try:
-        data = request.get_json()
-        tag = data.get("tag", "future/recommended")
-        scroll_depth = int(data.get("scroll_depth", 5))
+# ROUTES
+# ------
 
-        articles = scrape_medium(tag, scroll_depth)
+stream_queues = {}
 
-        # Save articles manually
-        for article in articles:
-            existing_article = session.query(Article).filter_by(link=article["link"]).first()
-            if not existing_article:
-                new_article = Article(title=article["title"], link=article["link"], tag=tag)
-                session.add(new_article)
+@app.route('/api/stream', methods=['POST'])
+@cross_origin()
+def start_scraping():
+    genre = request.json.get('genre')
+    type_ = request.json.get('type')
+    tag = f"{genre}/{type_}"
 
-        session.commit()
-        return jsonify({"message": "Scraping complete", "articles_scraped": len(articles)})
+    if tag in stream_queues:
+        return {"message": "Scraper already running."}, 200
 
-    except Exception as e:
-        session.rollback()
-        print(f"Error in /scrape: {e}")
-        return jsonify({"error": str(e)}), 500
+    q = queue.Queue()
+    stream_queues[tag] = q
 
-    finally:
-        session.close()
+    def run_scraper(q, tag):
+        async def async_scrape():
+            if tag in active_scrapers:
+                app.logger.info(f"Already scraping tag: {tag}")
+                return
 
-@app.route('/articles', methods=['GET'])
-def get_articles():
-    """Retrieve saved articles."""
-    session = SessionLocal()
-    try:
-        articles = session.query(Article).order_by(Article.scraped_at.desc()).all()
-        return jsonify([article.to_dict() for article in articles])
+            active_scrapers.add(tag)
+            app.logger.info(f"Started scraping tag: {tag}")
 
-    except Exception as e:
-        print(f"Error in /articles: {e}")
-        return jsonify({"error": str(e)}), 500
+            try:
+                async for article in sh.scrape_medium(tag, 25):
+                    # app.logger.info(f"Scraped article: {article['title']}")
+                    q.put(article)
+            finally:
+                app.logger.info(f"Scraping done for: {tag}")
+                active_scrapers.discard(tag)
+                q.put(None)  # signal to stop generator
 
-    finally:
-        session.close()
+        asyncio.run(async_scrape())
 
-if __name__ == "__main__":
-    print("🚀 Starting Flask server on port 5001")
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    threading.Thread(target=run_scraper, args=(q, tag), daemon=True).start()
+    return {"message": "Scraper started"}, 200
+
+
+@app.route('/api/stream_feed', methods=['GET'])
+@cross_origin()
+def stream_feed():
+    genre = request.args.get('genre')
+    type_ = request.args.get('type')
+    tag = f"{genre}/{type_}"
+
+    q = stream_queues.get(tag)
+    if not q:
+        return {"error": "No stream found for that tag"}, 404
+
+    def stream():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return Response(stream_with_context(stream()), mimetype='text/event-stream')
+
+
+# APP START
+# ----------
+
+if __name__ == '__main__':
+    
+    # NOTE: Do NOT use the default Flask server in production!!!
+    # Another NOTE: You could write an article on this topic :D
+    app.run(host='0.0.0.0', port=5050, debug=True)
